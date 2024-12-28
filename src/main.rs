@@ -1,36 +1,56 @@
-use web3::types::{BlockId, BlockNumber, Transaction, TransactionReceipt, H160};
-use web3::transports::Http;
-use web3::Web3;
+mod config;
+//mod web3_client;
+//mod trading;
+
+use dotenv::dotenv;
+
+use std::convert::TryFrom;
+use std::sync::Arc;
+
+use ethers::prelude::*;
+//use eyre::Result;
+use tokio::time::Duration;
 
 #[tokio::main]
-async fn main() -> web3::Result<()> {
-    // Connect to Ganache running on localhost:8545
-    let transport = Http::new("http://127.0.0.1:7545")?;
-    let web3 = Web3::new(transport);
+async fn main() {
+    dotenv().ok();
 
-    let block_number = web3.eth().block_number().await?;
-    println!("Latest block number: {:?}", block_number);
+    let rpc_url = config::get_rpc_url();
+    let private_key = config::get_private_key();
 
-    // Fetch the latest block
-    if let Some(block) = web3.eth().block(BlockId::Number(BlockNumber::Latest)).await? {
-        //println!("Block Details: {:?}", block);
+    let provider = Provider::<Http>::try_from(rpc_url).expect("Couldn't instantiate provider");
 
-        // Loop through transactions in the block
-        
-        for tx_hash in block.transactions {
-            let tx = web3.eth().transaction(tx_hash.into()).await?;
-            let receipt = web3.eth().transaction_receipt(tx_hash.into()).await?;
+    // Optionally, increase the poll interval if needed.
+    // This is how frequently the client checks for transaction confirmations.
+    let provider = provider.interval(Duration::from_millis(1000));
 
-            println!("\nTransaction: {:?}", tx);
-            println!("Receipt: {:?}", receipt);
+    println!("Connected to Ganache!");
 
-            // Perform analysis (example: gas used)
-            if let Some(r) = receipt {
-                println!("Gas used: {:?}", r.gas_used);
-            }
-        }
-        
+    let wallet: LocalWallet = private_key.parse().expect("Wallet address is not correct one.");
+    let wallet = wallet.with_chain_id(1337u64);
+
+    // Connect the wallet (signer) to the provider
+    let client = SignerMiddleware::new(provider, wallet);
+    let client = Arc::new(client);
+
+    //Define the recipient address
+    let recipient: Address = "0xC6494D7b78eD8170592a2eDFe25f1b863917B3E0".parse().expect("Recipient address is not correct");
+
+    let tx = TransactionRequest::pay(recipient, 1_000_000_000_000_000_000u128);
+
+    println!("Sending transaction...");
+
+    //Submit the transactio to Ganache
+    let pending_tx = client.send_transaction(tx, None).await.expect("Transaction failed!!!");
+
+    //Wait for transaction confirmation
+    let receipt = pending_tx.confirmations(1).await.expect("Block creation failed!!!");
+
+    if let Some(receipt) = receipt {
+        println!("Transaction mined!");
+        println!("Transaction hash: {:?}", receipt.transaction_hash);
+        println!("Gas used: {:?}", receipt.gas_used);
+    } else {
+        println!("Transaction not confirmed yet...");
     }
-
-    Ok(())
 }
